@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>EEG Seizure Detection Dashboard</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- jsPDF -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+  <style>
+    .glass {
+      background: rgba(255,255,255,0.06);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+    .fade-in { animation: fadeIn .35s ease-in-out; }
+    @keyframes fadeIn { from{opacity:0; transform:translateY(6px)} to{opacity:1; transform:translateY(0)} }
+
+    .loader {
+      border: 4px solid rgba(255,255,255,0.12);
+      border-top: 4px solid #4ADE80;
+      border-radius: 50%;
+      width: 36px; height:36px;
+      animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to{ transform:rotate(360deg); } }
+
+    /* How the system fade steps */
+    .fade-step { opacity:0; transform:translateY(8px); animation: fadeInUp .5s forwards; }
+    .fade-step:nth-child(1){animation-delay:.08s}
+    .fade-step:nth-child(2){animation-delay:.16s}
+    .fade-step:nth-child(3){animation-delay:.24s}
+    .fade-step:nth-child(4){animation-delay:.32s}
+    @keyframes fadeInUp { to{opacity:1; transform:translateY(0)} }
+
+    /* Gauge */
+    .gauge-wrapper { position:relative; display:inline-block; }
+    .gauge-center { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); text-align:center; }
+
+    /* Animated badges */
+    .pulse-red {
+      position:relative;
+      animation: pulseRed 1.6s infinite;
+      border-radius:999px;
+    }
+    @keyframes pulseRed {
+      0% { box-shadow: 0 0 0 0 rgba(220,38,38,0.5); }
+      70% { box-shadow: 0 0 18px 12px rgba(220,38,38,0); }
+      100% { box-shadow: 0 0 0 0 rgba(220,38,38,0); }
+    }
+    .breathe-green {
+      position:relative;
+      animation: breatheGreen 2s infinite;
+      border-radius:999px;
+    }
+    @keyframes breatheGreen {
+      0% { box-shadow: 0 0 0 0 rgba(16,185,129,0.35); }
+      60% { box-shadow: 0 0 14px 8px rgba(16,185,129,0); }
+      100% { box-shadow: 0 0 0 0 rgba(16,185,129,0); }
+    }
+
+    /* Toasts */
+    .toast-container { position: fixed; top: 16px; right: 16px; z-index: 60; display:flex; flex-direction:column; gap:8px; }
+    .toast { min-width:200px; padding:10px 14px; border-radius:8px; color:#fff; font-size:14px; box-shadow:0 6px 18px rgba(0,0,0,0.4); opacity:0; transform: translateY(-6px); animation: toastIn .28s forwards; }
+    @keyframes toastIn { to { opacity:1; transform:none; } }
+    .toast-success { background: #10b981; }
+    .toast-info { background: #3b82f6; }
+    .toast-error { background: #ef4444; }
+
+    /* --- Upgraded Tab Styles --- */
+.tab-btn {
+  padding: 10px 20px;
+  border-radius: 10px;
+  font-weight: 500;
+  color: #cbd5e1; /* Slate-300 */
+  transition: 0.25s ease;
+}
+
+.tab-btn:hover {
+  background: rgba(255,255,255,0.08);
+  color: white;
+}
+
+.tab-btn.active {
+  background: rgba(255,255,255,0.16);
+  color: white;
+  box-shadow: inset 0 0 10px rgba(255,255,255,0.12);
+  border-bottom: 3px solid #4ade80; /* soft green indicator */
+  animation: tabGlow 0.35s ease-out;
+}
+
+@keyframes tabGlow {
+  from { border-bottom-color: transparent; opacity: 0.6; }
+  to { border-bottom-color: #4ade80; opacity: 1; }
+}
+
+  </style>
+</head>
+<body class="bg-gray-900 text-white min-h-screen">
+
+  <!-- Toast container -->
+  <div id="toastContainer" class="toast-container" aria-live="polite" aria-atomic="true"></div>
+
+  <!-- NAV -->
+  <nav class="glass p-4 flex justify-between items-center shadow-md">
+    <div class="flex items-center gap-3"><span class="text-2xl">🧠</span><h1 class="text-2xl font-extrabold">EEG Seizure Detection</h1></div>
+    <span class="text-gray-300 text-sm hidden sm:inline">Mini Project | Bhuvan</span>
+  </nav>
+
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 p-8">
+
+    <!-- LEFT SIDEBAR unchanged -->
+    <div class="lg:col-span-1 space-y-6">
+
+      <!-- How the System Works -->
+      <div class="glass rounded-2xl shadow-xl fade-in overflow-hidden">
+        <button id="howToggle" class="w-full text-left px-6 py-4 flex items-center justify-between hover:bg-white/5 transition">
+          <h2 class="text-xl font-bold">🧩 How the System Works</h2>
+          <span id="toggleIcon" class="text-gray-300 text-2xl">+</span>
+        </button>
+        <div id="howContent" class="hidden px-6 pb-6">
+          <div class="flex justify-between items-center mt-3 mb-6">
+            <div class="flex flex-col items-center fade-step"><span class="text-3xl">🧠</span><p class="text-xs text-gray-300 mt-1">EEG Signal</p></div>
+            <div class="text-gray-500 text-2xl fade-step">→</div>
+            <div class="flex flex-col items-center fade-step"><span class="text-3xl">🌈</span><p class="text-xs text-gray-300 mt-1">Heatmap</p></div>
+            <div class="text-gray-500 text-2xl fade-step">→</div>
+            <div class="flex flex-col items-center fade-step"><span class="text-3xl">🤖</span><p class="text-xs text-gray-300 mt-1">CNN + Attention</p></div>
+            <div class="text-gray-500 text-2xl fade-step">→</div>
+            <div class="flex flex-col items-center fade-step"><span class="text-3xl">📊</span><p class="text-xs text-gray-300 mt-1">Prediction</p></div>
+          </div>
+          <div class="space-y-4">
+            <div class="flex items-start space-x-3"><div class="bg-blue-600 text-white px-2 py-1 rounded-md text-xs font-bold">1</div><p class="text-gray-300 text-sm">EEG → <span class="text-blue-400 font-semibold">178×178 RGB heatmap</span>.</p></div>
+            <div class="flex items-start space-x-3"><div class="bg-blue-600 text-white px-2 py-1 rounded-md text-xs font-bold">2</div><p class="text-gray-300 text-sm">Preprocessing → <span class="text-blue-400 font-semibold">CNN + Attention</span>.</p></div>
+            <div class="flex items-start space-x-3"><div class="bg-blue-600 text-white px-2 py-1 rounded-md text-xs font-bold">3</div><p class="text-gray-300 text-sm">Attention highlights seizure regions.</p></div>
+            <div class="flex items-start space-x-3"><div class="bg-blue-600 text-white px-2 py-1 rounded-md text-xs font-bold">4</div><p class="text-gray-300 text-sm">Output: <span class="text-green-400">Normal</span> / <span class="text-red-400">Seizure</span>.</p></div>
+          </div>
+        </div>
+      </div>
+
+
+      <!-- Performance -->
+      <div class="glass p-6 rounded-2xl shadow-xl fade-in">
+        <h2 class="text-xl font-bold mb-3">📊 Performance Metrics</h2>
+        <ul class="space-y-2 text-gray-300 text-sm">
+          <li>Precision: <span id="metricPrecision" class="text-blue-400 font-semibold">91%</span></li>
+          <li>Recall: <span id="metricRecall" class="text-blue-400 font-semibold">89%</span></li>
+          <li>F1 Score: <span id="metricF1" class="text-blue-400 font-semibold">90%</span></li>
+        </ul>
+        <button onclick="openMatrix()" class="mt-4 px-4 py-2 bg-blue-600 rounded-xl hover:bg-blue-700">View Confusion Matrix</button>
+      </div>
+
+      <!-- Accuracy -->
+      <div class="glass p-6 rounded-2xl shadow-xl fade-in"
+     style="mask-image: linear-gradient(to bottom, black 40%, transparent 120%);">
+        <h2 class="text-lg font-bold">📈 Validation Accuracy</h2>
+        <p class="text-4xl font-extrabold text-green-400 mt-2">93.2%</p>
+        <p class="text-gray-400 text-sm">from training logs</p>
+      </div>
+
+    </div>
+
+    <!-- RIGHT: TABS AREA -->
+    <div class="lg:col-span-2 space-y-6">
+
+<!-- TAB BAR (UPGRADED UI) -->
+<div class="glass rounded-2xl p-4 mb-5 flex items-center gap-4 
+            backdrop-blur-lg shadow-lg"
+     style="background: linear-gradient(to right, rgba(255,255,255,0.07), rgba(255,255,255,0.02));">
+
+  <button class="tab-btn active" data-tab="prediction">🔍 Prediction</button>
+  <button class="tab-btn" data-tab="history">🕒 History</button>
+  <button class="tab-btn" data-tab="model">🤖 Model Info</button>
+  <button class="tab-btn" data-tab="about">ℹ️ About</button>
+
+</div>
+
+
+      <!-- TAB PANELS -->
+      <div id="tabContent" class="space-y-6">
+
+        <!-- Prediction Tab -->
+        <div id="prediction" class="tab-panel glass p-6 rounded-2xl shadow-xl">
+          <div class="grid md:grid-cols-2 gap-6">
+            <div>
+              <div id="drop-area" class="glass rounded-2xl p-6 flex flex-col items-center border-2 border-dashed border-gray-600 cursor-pointer hover:bg-gray-800 transition">
+                <h3 class="text-lg font-semibold">Upload Heatmap</h3>
+                <p class="text-gray-400 text-sm">Drag & drop or click to browse</p>
+                <input type="file" id="fileInput" class="hidden" accept="image/*">
+                <div id="uploadProgress" class="w-full bg-gray-800 h-2 rounded-full mt-4 hidden">
+                  <div id="uploadBar" class="h-2 bg-green-500 rounded-full" style="width:0%"></div>
+                </div>
+                <p id="uploadPercent" class="text-xs text-gray-400 mt-2 hidden"></p>
+              </div>
+
+              <div class="mt-4 flex items-center gap-4">
+                <img id="preview" class="w-40 h-40 rounded-xl hidden object-cover border border-gray-700 shadow-lg" />
+                <div id="loaderBox" class="hidden text-center">
+                  <div class="loader mx-auto"></div>
+                  <p class="text-gray-300 mt-2">Analyzing...</p>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <div id="resultBox" class="glass p-4 rounded-2xl hidden">
+                <div class="flex items-center justify-between">
+                  <div>
+                    <div id="animatedBadge" class="inline-block"></div>
+                    <p id="predictionText" class="text-xl mt-3 font-medium"></p>
+                    <p id="confidenceText" class="text-gray-300 mt-1"></p>
+                  </div>
+
+                  <!-- Gauge -->
+                  <div class="gauge-wrapper">
+                    <svg class="w-28 h-28 transform -rotate-90" viewBox="0 0 100 100">
+                      <circle cx="50" cy="50" r="45" stroke="#0f1724" stroke-width="10" fill="none"></circle>
+                      <circle id="gaugeCircle" cx="50" cy="50" r="45" stroke="#10B981" stroke-width="10" stroke-linecap="round" fill="none" stroke-dasharray="283" stroke-dashoffset="283"></circle>
+                    </svg>
+                    <div class="gauge-center">
+                      <div id="gaugeText" class="text-lg font-bold">0%</div>
+                      <div class="text-xs text-gray-300">Confidence</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="mt-4 flex gap-3">
+                  <button id="downloadPdfBtn" class="px-4 py-2 bg-indigo-600 rounded-md hover:bg-indigo-700">Download Report (PDF)</button>
+                  <button id="resetBtn" class="px-4 py-2 bg-gray-800 rounded-md hover:bg-gray-700">Reset</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- History Tab -->
+        <div id="history" class="tab-panel hidden glass p-6 rounded-2xl shadow-xl">
+          <h3 class="text-xl font-bold mb-4">Session History</h3>
+          <div class="max-h-72 overflow-y-auto">
+            <ul id="fullHistoryList" class="space-y-2 text-gray-300 text-sm"></ul>
+          </div>
+          <div class="mt-4 flex gap-3">
+            <button id="clearHistory" class="px-4 py-2 bg-red-600 rounded-md hover:bg-red-700">Clear History</button>
+            <button id="downloadAllCsv" class="px-4 py-2 bg-green-600 rounded-md hover:bg-green-700">Export CSV</button>
+          </div>
+        </div>
+
+        <!-- Model Info Tab -->
+        <div id="model" class="tab-panel hidden glass p-6 rounded-2xl shadow-xl">
+          <h3 class="text-xl font-bold mb-3">Model Information</h3>
+          <p class="text-sm text-gray-300">Architecture: <strong>CNN + Attention</strong></p>
+          <p class="text-sm text-gray-300">Input: 178×178 RGB heatmap</p>
+          <p class="text-sm text-gray-300">Training epochs: 15</p>
+          <p class="text-sm text-gray-300">Best val accuracy: <strong>93.2%</strong></p>
+        </div>
+
+        <!-- About Tab -->
+        <div id="about" class="tab-panel hidden glass p-6 rounded-2xl shadow-xl">
+          <h3 class="text-xl font-bold mb-3">About & How it Works</h3>
+          <p class="text-gray-300 text-sm">A seizure is an abnormal burst of electrical activity in the brain. EEG captures spikes and rhythmic patterns.This dashboard converts EEG vectors into heatmaps, uses a CNN+Attention model to detect seizures, and returns prediction + confidence.</p>
+          <div class="mt-3 space-y-2 text-gray-300 text-sm">
+            <div>• Upload heatmap image</div>
+            <div>• Model analyzes and returns prediction</div>
+            <div>• Download report or view session history</div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+
+<script>
+  // ---- Utilities: Toasts ----
+  function showToast(message, type='info', timeout=3000) {
+    const container = document.getElementById('toastContainer');
+    const div = document.createElement('div');
+    div.className = 'toast ' + (type==='success' ? 'toast-success' : type==='error' ? 'toast-error' : 'toast-info');
+    div.innerText = message;
+    container.appendChild(div);
+    setTimeout(()=> {
+      div.style.opacity = '0'; div.style.transform = 'translateY(-8px)';
+      setTimeout(()=> container.removeChild(div), 300);
+    }, timeout);
+  }
+
+// --- Enhanced Tab Logic ---
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+
+    // Remove old active state
+    document.querySelectorAll('.tab-btn')
+      .forEach(b => b.classList.remove('active'));
+
+    // Add active class to clicked tab
+    btn.classList.add('active');
+
+    // Switch panels
+    const target = btn.dataset.tab;
+    document.querySelectorAll('.tab-panel')
+      .forEach(panel => panel.classList.add('hidden'));
+
+    document.getElementById(target).classList.remove('hidden');
+  });
+});
+
+// Auto-activate Prediction tab on load
+document.querySelector('.tab-btn[data-tab="prediction"]').click();
+
+
+  // ---- Basic elements ----
+  const dropArea    = document.getElementById('drop-area');
+  const fileInput   = document.getElementById('fileInput');
+  const preview     = document.getElementById('preview');
+  const loaderBox   = document.getElementById('loaderBox');
+  const resultBox   = document.getElementById('resultBox');
+  const animatedBadge = document.getElementById('animatedBadge');
+  const predictionText = document.getElementById('predictionText');
+  const confidenceText = document.getElementById('confidenceText');
+  const uploadProgress = document.getElementById('uploadProgress');
+  const uploadBar      = document.getElementById('uploadBar');
+  const uploadPercent  = document.getElementById('uploadPercent');
+  const gaugeCircle = document.getElementById('gaugeCircle');
+  const gaugeText = document.getElementById('gaugeText');
+
+  const historyList = document.getElementById('historyList');       // left small history
+  const fullHistoryList = document.getElementById('fullHistoryList'); // history tab
+
+  // How the system toggle
+  const howToggle = document.getElementById('howToggle');
+  const howContent = document.getElementById('howContent');
+  const toggleIcon = document.getElementById('toggleIcon');
+  howToggle.addEventListener('click', () => {
+    const open = !howContent.classList.contains('hidden');
+    howContent.classList.toggle('hidden');
+    toggleIcon.innerText = open ? '+' : '−';
+  });
+
+  // Drag & drop
+  dropArea.addEventListener('click', () => fileInput.click());
+  dropArea.addEventListener('dragover', e => { e.preventDefault(); dropArea.classList.add('bg-gray-800'); });
+  dropArea.addEventListener('dragleave', () => dropArea.classList.remove('bg-gray-800'));
+  dropArea.addEventListener('drop', e => { e.preventDefault(); dropArea.classList.remove('bg-gray-800'); if (e.dataTransfer.files?.[0]) handleFile(e.dataTransfer.files[0]); });
+  fileInput.addEventListener('change', e => handleFile(e.target.files[0]));
+
+  // Animate gauge
+  function animateGauge(percent) {
+    const total = 283;
+    const offset = Math.round(total - (total * percent) / 100);
+    gaugeCircle.style.transition = 'stroke-dashoffset 900ms ease';
+    gaugeCircle.style.strokeDashoffset = offset;
+    gaugeText.innerText = Math.round(percent) + '%';
+  }
+
+  // Animated badge setter
+  function setAnimatedBadge(pred) {
+    animatedBadge.innerHTML = ''; // clear
+    const b = document.createElement('div');
+    b.className = 'px-3 py-1 rounded-full text-sm font-semibold inline-block';
+    if (String(pred).trim().toLowerCase() === 'seizure') {
+      b.classList.add('bg-red-600','text-white','pulse-red');
+      b.innerText = '⚠ Seizure Detected';
+    } else {
+      b.classList.add('bg-green-600','text-white','breathe-green');
+      b.innerText = '✓ No Seizure Detected';
+    }
+    animatedBadge.appendChild(b);
+  }
+
+  // Set result (UI)
+  function setResult(prediction, confidencePercent) {
+    setAnimatedBadge(prediction);
+    predictionText.innerText = 'Prediction: ' + prediction;
+    confidenceText.innerText = 'Confidence: ' + confidencePercent.toFixed(2) + '%';
+    resultBox.classList.remove('hidden');
+    animateGauge(confidencePercent);
+    showToast('Prediction complete', 'success');
+  }
+
+  // HISTORY helpers
+  function pushHistory(time, pred, conf) {
+    const text = `${time} — ${pred} (${conf.toFixed(2)}%)`;
+    const liLeft = document.createElement('li');
+    liLeft.innerText = text;
+    historyList.appendChild(liLeft);
+
+    const liFull = document.createElement('li');
+    liFull.innerText = text;
+    fullHistoryList.appendChild(liFull);
+
+    document.getElementById('historyBox').classList.remove('hidden');
+  }
+
+  // Reset button
+  document.getElementById('resetBtn').addEventListener('click', () => {
+    preview.src = ''; preview.classList.add('hidden');
+    resultBox.classList.add('hidden');
+    animateGauge(0);
+    showToast('Dashboard reset', 'info');
+  });
+
+  // Export history CSV (tab)
+  document.getElementById('downloadAllCsv').addEventListener('click', () => {
+    const rows = [['Time','Prediction','Confidence']];
+    document.querySelectorAll('#fullHistoryList li').forEach(li => {
+      const parts = li.innerText.split(' — ');
+      if (parts.length === 2) {
+        const time = parts[0].trim();
+        const match = parts[1].match(/(.+)\s+\((.+)%\)/);
+        if (match) rows.push([time, match[1].trim(), match[2].trim()]);
+      }
+    });
+    const csv = rows.map(r => r.map(c => `"${c}"`).join(',')).join('\n');
+    const blob = new Blob([csv], {type:'text/csv'}); const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'session_history.csv'; a.click();
+    URL.revokeObjectURL(url);
+    showToast('History exported', 'success');
+  });
+
+  // Clear history
+  document.getElementById('clearHistory').addEventListener('click', () => {
+    fullHistoryList.innerHTML = ''; historyList.innerHTML = ''; document.getElementById('historyBox').classList.add('hidden');
+    showToast('History cleared', 'info');
+  });
+
+  // Export left small history CSV (button)
+  document.getElementById('exportHistory').addEventListener('click', () => {
+    const rows = [['Time','Prediction','Confidence']];
+    document.querySelectorAll('#historyList li').forEach(li => {
+      const parts = li.innerText.split(' — ');
+      if (parts.length === 2) {
+        const time = parts[0].trim();
+        const match = parts[1].match(/(.+)\s+\((.+)%\)/);
+        if (match) rows.push([time, match[1].trim(), match[2].trim()]);
+      }
+    });
+    const csv = rows.map(r => r.join(',')).join('\n');
+    const blob = new Blob([csv], {type:'text/csv'}); const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'prediction_history.csv'; a.click(); URL.revokeObjectURL(url);
+    showToast('History exported', 'success');
+  });
+
+  // Confusion matrix open (Flask static)
+  function openMatrix() {
+    // Ensure your image is at /static/confusion_matrix_attention.png
+    window.open('/static/confusion_matrix_heatmap.png', '_blank');
+  }
+
+  // UPLOAD + PREDICT (XHR with progress)
+  function handleFile(file) {
+    if (!file) return;
+    // preview
+    const objectUrl = URL.createObjectURL(file);
+    preview.src = objectUrl; preview.classList.remove('hidden');
+
+    // UI
+    loaderBox.classList.remove('hidden'); resultBox.classList.add('hidden');
+    uploadProgress.classList.remove('hidden'); uploadBar.style.width = '0%'; uploadPercent.classList.remove('hidden'); uploadPercent.innerText = '0%';
+
+    // XHR
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST','/predict', true);
+
+    xhr.upload.onprogress = function(e) {
+      if (e.lengthComputable) {
+        const p = Math.round((e.loaded / e.total) * 100);
+        uploadBar.style.width = p + '%';
+        uploadPercent.innerText = p + '%';
+      }
+    };
+
+    xhr.onload = function() {
+      loaderBox.classList.add('hidden');
+      setTimeout(()=> { uploadProgress.classList.add('hidden'); uploadPercent.classList.add('hidden'); }, 700);
+
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          const data = JSON.parse(xhr.responseText);
+          // backend expected: { prediction: "Seizure"|"Non-Seizure", confidence: 0.92 }
+          const prediction = data.prediction ?? 'Unknown';
+          const confRaw = (typeof data.confidence !== 'undefined') ? Number(data.confidence) : 0;
+          const confPercent = confRaw <= 1 ? confRaw * 100 : confRaw;
+
+          // set result + history
+          setResult(prediction, confPercent);
+          const now = new Date().toLocaleTimeString();
+          pushHistory(now, prediction, confPercent);
+
+          showToast('Upload successful', 'success');
+
+        } catch (err) {
+          console.error('Parse error', err, xhr.responseText);
+          showToast('Invalid server response', 'error');
+        }
+      } else {
+        showToast('Upload failed (server error)', 'error');
+      }
+    };
+
+    xhr.onerror = function() {
+      loaderBox.classList.add('hidden');
+      showToast('Network error during upload', 'error');
+    };
+
+    const fd = new FormData(); fd.append('file', file);
+    xhr.send(fd);
+    showToast('Uploading...', 'info', 1200);
+  }
+
+  // PDF generation: uses jsPDF (UMD)
+  document.getElementById('downloadPdfBtn').addEventListener('click', async () => {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+
+    // Title and metadata
+    doc.setFontSize(18); doc.text('EEG Seizure Detection Report', 40, 50);
+    doc.setFontSize(11);
+    const now = new Date();
+    doc.text(`Generated: ${now.toLocaleString()}`, 40, 72);
+
+    // Prediction + confidence
+    const pred = (document.getElementById('predictionText').innerText || '').replace('Prediction: ', '');
+    const conf = (document.getElementById('confidenceText').innerText || '').replace('Confidence: ', '');
+    doc.text(`Prediction: ${pred}`, 40, 100);
+    doc.text(`Confidence: ${conf}`, 40, 118);
+
+    // Model summary (brief)
+    doc.text('Model: CNN + Attention', 40, 140);
+    doc.text('Validation accuracy: 93.2%', 40, 156);
+
+    // If preview image exists, draw it
+    const imgEl = document.getElementById('preview');
+    if (imgEl && imgEl.src) {
+      try {
+        // draw image onto canvas to get dataURL in same origin
+        const canvas = document.createElement('canvas');
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        await new Promise((res, rej) => {
+          img.onload = res; img.onerror = rej;
+          img.src = imgEl.src;
+        });
+        // scale to fit width ~400pt while keeping ratio
+        const maxW = 400;
+        const scale = Math.min(1, maxW / img.width);
+        canvas.width = img.width * scale;
+        canvas.height = img.height * scale;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        const dataUrl = canvas.toDataURL('image/png');
+        doc.addImage(dataUrl, 'PNG', 40, 180, canvas.width, canvas.height);
+      } catch (err) {
+        console.warn('Could not add image to PDF', err);
+      }
+    }
+
+    // Footer
+    doc.setFontSize(9);
+    doc.text('Generated by EEG Seizure Detection System', 40, doc.internal.pageSize.height - 30);
+
+    // Save
+    doc.save(`eeg_report_${Date.now()}.pdf`);
+    showToast('PDF downloaded', 'success');
+  });
+
+  // Initialize gauge
+  animateGauge(0);
+
+</script>
+</body>
+</html>
