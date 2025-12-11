@@ -1,0 +1,25 @@
+__pycache__/
+*.pyc
+
+# BIG folders to ignore
+heatmap_images/
+logs/
+logs_attention/
+uploads/
+
+# Not needed during deployment
+train.py
+image_model_training.py
+confusion_matrix.py
+heatmap_generator.py
+
+# Large models not used
+best_cnn_attention.keras
+final_cnn_attention.keras
+
+# Ignore raw data
+*.csv
+*.joblib
+
+# Ignore images used for offline analysis
+*.png
